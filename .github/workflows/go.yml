@@ -2,9 +2,9 @@ name: Go CI/CD
 
 on:
   push:
-    branches: [ "master", "develop" ]
+    branches: [ "master"]
   pull_request:
-    branches: [ "master", "develop" ]
+    branches: [ "master"]
 
 jobs:
 
@@ -16,7 +16,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.21'  # Обновлено до 1.21
+        go-version: '1.21'
 
     - name: Cache Go modules
       uses: actions/cache@v3
