@@ -1,4 +1,3 @@
-# Локально в корне репозитория:
 echo 'module mitre-mitigates
 
 go 1.21' > go.mod
