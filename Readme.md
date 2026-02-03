@@ -33,7 +33,7 @@ go build -o mitremit mitre-mitigates.go
 
 **Поиск по названию:**
 ```bash
-./mitremit -mitigation-name "Disable or Remove Feature" -csv
+./mitremit -mitigation-name "Filter Network Traffic" -csv
 ```
 
 **Генерация nGQL-запросов:**
