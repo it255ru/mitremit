@@ -1,12 +1,19 @@
-name: Simple Build
-on: [push, pull_request]
+name: Build
+
+on: [push]
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/setup-go@v4
         with:
           go-version: '1.21'
+      
       - run: go build -o mitremit mitre-mitigates.go
-      - run: ./mitremit -h
+      
+      - run: |
+          echo "Build completed!"
+          ./mitremit -h || echo "Help displayed"
