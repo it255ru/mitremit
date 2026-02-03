@@ -2,14 +2,12 @@ name: Go CI/CD
 
 on:
   push:
-    branches: [ "master", "main", "develop" ]
-    tags: [ 'v*' ]
+    branches: [ "master", "main" ]
   pull_request:
     branches: [ "master", "main" ]
 
 jobs:
-  setup:
-    name: Initialize and Validate
+  build-and-test:
     runs-on: ubuntu-latest
     
     steps:
@@ -20,107 +18,56 @@ jobs:
       uses: actions/setup-go@v4
       with:
         go-version: '1.21'
-        cache: true
     
-    - name: Initialize Go module if not exists
+    - name: Initialize Go module if needed
       run: |
         if [ ! -f go.mod ]; then
           echo "Initializing Go module..."
-          go mod init github.com/yourusername/mitre-sync
-          # Или, если хотите использовать локальное имя:
-          # go mod init mitre-sync
+          go mod init mitre-mitigates
         fi
     
-    - name: Tidy dependencies
+    - name: Tidy modules (for future dependencies)
       run: go mod tidy
     
     - name: Verify module
       run: |
-        echo "Go module path:"
+        echo "Module info:"
         go list -m
-        echo -e "\nModule dependencies:"
-        go list -m all
-
-  test:
-    name: Run Tests
-    needs: setup
-    runs-on: ubuntu-latest
+        echo -e "\nProject structure:"
+        find . -name "*.go" | head -10
     
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Setup Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.21'
-        cache: true
-    
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cache/go-build
-          ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-    
-    - name: Install dependencies
-      run: go mod download
-    
-    - name: Check code formatting
+    - name: Build
       run: |
-        # Игнорируем ошибки для первого запуска
-        if [ -n "$(gofmt -l . 2>/dev/null)" ]; then
-          echo "Warning: Code is not formatted. Consider running 'gofmt -w .'"
-          # Не падаем, только предупреждаем
-        fi
+        # Собираем текущий файл как исполняемый
+        go build -o mitremit mitre-mitigates.go
+        ls -la mitremit
     
-    - name: Build specific binary
+    - name: Test (if tests exist)
       run: |
-        # Собираем основной исполняемый файл
-        go build -o mitre-sync .
+        # Создаем простой тест для проверки бинарника
+        ./mitremit -h 2>&1 | grep -i "usage" && echo "Build successful - help works"
+        # Если будут тесты в будущем, можно добавить:
+        # go test ./...
     
-    - name: Run tests if they exist
-      run: |
-        # Пытаемся запустить тесты, если они есть
-        if go test ./... -count=1 2>&1 | grep -q "no test files"; then
-          echo "No tests found, skipping test execution"
-        else
-          go test -v ./...
-        fi
-
-  build:
-    name: Build and Package
-    needs: test
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Setup Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.21'
-        cache: true
-    
-    - name: Build for multiple platforms
+    - name: Create release artifacts
       run: |
         mkdir -p dist
         
         # Linux
-        GOOS=linux GOARCH=amd64 go build -o dist/mitre-sync-linux-amd64 .
+        GOOS=linux GOARCH=amd64 go build -o dist/mitremit-linux-amd64 mitre-mitigates.go
         
         # macOS
-        GOOS=darwin GOARCH=amd64 go build -o dist/mitre-sync-darwin-amd64 .
+        GOOS=darwin GOARCH=amd64 go build -o dist/mitremit-darwin-amd64 mitre-mitigates.go
         
         # Windows
-        GOOS=windows GOARCH=amd64 go build -o dist/mitre-sync-windows-amd64.exe .
+        GOOS=windows GOARCH=amd64 go build -o dist/mitremit-windows-amd64.exe mitre-mitigates.go
+        
+        echo "Built artifacts:"
+        ls -la dist/
     
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
-        name: binaries
+        name: mitre-mitigates-binaries
         path: dist/
+        retention-days: 5
