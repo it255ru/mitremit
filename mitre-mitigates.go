@@ -1,11 +1,17 @@
 // mitre-mitigates.go
 //
-// Tool that, given a MITRE ATT&CK mitigation (by external ID or by name),
+// (EN) Tool that, given a MITRE ATT&CK mitigation (by external ID or by name),
 // lists every technique / sub‑technique it mitigates.  Output can be a
 // table (default), JSON, CSV or Nebula Graph nGQL INSERT statements.
-//
 // It automatically downloads the latest ATT&CK enterprise STIX bundle
 // and caches the bundle locally.
+// 
+// (RU) Код на Go выполняет следующие действия:
+// Загружает набор данных MITRE ATT&CK в формате STIX (JSON) из репозитория MITRE (или из кэша, если уже скачано).
+// Парсит JSON, извлекая объекты: курсы действий (mitigations), методы атаки (techniques) и отношения (relationships).
+// Позволяет пользователю указать средство смягчения (mitigation) по его ID (например, M1037) или по имени.
+// Находит все методы атаки (techniques), которые смягчаются данным средством, используя отношения (relationships) с типом "mitigates".
+// Выводит результат в одном из форматов: таблица (по умолчанию), JSON, CSV или в виде команд nGQL для Nebula Graph.
 //
 // Build & run:
 //
@@ -15,7 +21,7 @@
 //   ./mitremit -mitigation M1037 -json > out.json
 //   ./mitremit -mitigation-name \"Disable or Remove Feature\" -ngql > out.ngql
 //
-// Author: ChatGPT (2024‑06) – MIT licence.
+// 
 // --------------------------------------------------------------
 
 package main
