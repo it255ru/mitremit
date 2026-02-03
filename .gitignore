@@ -1,0 +1,13 @@
+# Binaries
+mitremit
+*.exe
+
+# Cache directory
+.mitre-cache/
+
+# Claude directory
+.claude/
+
+# Go build artifacts
+*.out
+*.test
