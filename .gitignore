@@ -1,13 +1,7 @@
-# Binaries
-mitremit
-*.exe
-
-# Cache directory
+mitre-sync
+coverage.out
+.DS_Store
+*.swp
+.idea/
+.vscode/
 .mitre-cache/
-
-# Claude directory
-.claude/
-
-# Go build artifacts
-*.out
-*.test
