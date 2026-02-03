@@ -1,0 +1,7 @@
+.git
+.gitignore
+*.md
+*.yaml
+*.yml
+coverage.out
+.golangci.yml
