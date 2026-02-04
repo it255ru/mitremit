@@ -1,7 +1,20 @@
+# .dockerignore
 .git
 .gitignore
 *.md
-*.yaml
-*.yml
-coverage.out
-.golangci.yml
+Dockerfile*
+docker-compose*.yml
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Игнорируем go.mod и go.sum если их нет
+go.mod
+go.sum
+
+# Артефакты сборки
+mitre-sync
+mitre-sync.exe
+dist/
