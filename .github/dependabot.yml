@@ -28,7 +28,7 @@ updates:
       - "ci"
       - "automated"
     reviewers:
-      - "your-username"  # Замени на свой username
+      - "it255ru"
     groups:
       # Группируем все actions в один PR
       github-actions:
@@ -54,7 +54,7 @@ updates:
       - "docker"
       - "automated"
     reviewers:
-      - "your-username"  # Замени на свой username
+      - "it255ru"
     # Игнорируем major версии Alpine (требуют ручной проверки)
     ignore:
       - dependency-name: "alpine"
@@ -79,7 +79,7 @@ updates:
       - "go"
       - "automated"
     reviewers:
-      - "your-username"  # Замени на свой username
+      - "it255ru"
     groups:
       # Группируем все go dependencies
       go-dependencies:
