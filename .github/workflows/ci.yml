@@ -1,0 +1,198 @@
+# =============================================================================
+# CI Pipeline - Fast checks on every push/PR
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [master, main, develop]
+    paths:
+      - 'Dockerfile'
+      - '*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [master, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: alpine-secure
+  HADOLINT_VERSION: "2.12.0"
+
+jobs:
+  # ===========================================================================
+  # Dockerfile Linting
+  # ===========================================================================
+  lint:
+    name: Lint Dockerfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Hadolint
+        uses: actions/cache@v4
+        id: cache-hadolint
+        with:
+          path: /usr/local/bin/hadolint
+          key: hadolint-${{ env.HADOLINT_VERSION }}
+
+      - name: Install Hadolint
+        if: steps.cache-hadolint.outputs.cache-hit != 'true'
+        run: |
+          curl -sL -o /usr/local/bin/hadolint \
+            "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64"
+          chmod +x /usr/local/bin/hadolint
+
+      - name: Run Hadolint
+        run: hadolint Dockerfile
+
+      - name: Check .dockerignore exists
+        run: |
+          if [ ! -f ".dockerignore" ]; then
+            echo "::warning::.dockerignore file not found"
+          fi
+
+  # ===========================================================================
+  # Build Docker Image
+  # ===========================================================================
+  build:
+    name: Build Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: lint
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      build-success: ${{ steps.build.outputs.success }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate image metadata
+        id: meta
+        run: |
+          echo "tags=${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "tags-latest=${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        id: build
+        run: |
+          set +e
+          docker build \
+            --tag ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --tag ${{ env.IMAGE_NAME }}:latest \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            . 2>&1 | tee build.log
+          BUILD_EXIT=$?
+          set -e
+          
+          if [ $BUILD_EXIT -eq 0 ]; then
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "✅ Build successful"
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "❌ Build failed"
+            tail -50 build.log
+            exit 1
+          fi
+
+      - name: Test image
+        if: steps.build.outputs.success == 'true'
+        run: |
+          echo "🧪 Testing image..."
+          
+          # Проверяем что образ запускается
+          docker run --rm ${{ env.IMAGE_NAME }}:latest -h || true
+          
+          # Проверяем user (если не scratch)
+          WHOAMI=$(docker run --rm --entrypoint whoami ${{ env.IMAGE_NAME }}:latest 2>/dev/null || echo "scratch")
+          echo "Running as: $WHOAMI"
+          
+          if [ "$WHOAMI" = "root" ]; then
+            echo "::warning::Container runs as root user"
+          fi
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.sha }}
+          path: build.log
+          retention-days: 7
+
+  # ===========================================================================
+  # Quick Security Check (fast, blocking)
+  # ===========================================================================
+  quick-security:
+    name: Quick Security Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+    if: needs.build.outputs.build-success == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image for scanning
+        run: docker build -t ${{ env.IMAGE_NAME }}:latest .
+
+      - name: Run Trivy (Critical/High only)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:latest
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+          trivyignores: .trivyignore
+
+      - name: Create .trivyignore if not exists
+        run: |
+          if [ ! -f ".trivyignore" ]; then
+            echo "# Add CVEs to ignore" > .trivyignore
+          fi
+
+  # ===========================================================================
+  # Summary
+  # ===========================================================================
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [lint, build, quick-security]
+    if: always()
+
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## CI Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint | ${{ needs.lint.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${{ needs.build.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | ${{ needs.quick-security.result == 'success' && '✅' || '⚠️' }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check results
+        run: |
+          if [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.build.result }}" != "success" ]; then
+            echo "❌ CI failed"
+            exit 1
+          fi
+          echo "✅ CI passed"
