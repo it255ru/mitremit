@@ -1,0 +1,151 @@
+# =============================================================================
+# Composite Action: Setup Security Tools
+# =============================================================================
+# Usage:
+#   - uses: ./.github/actions/setup-security-tools
+#     with:
+#       tools: 'hadolint,grype,trivy'
+# =============================================================================
+name: 'Setup Security Tools'
+description: 'Install security scanning tools (Hadolint, Grype, Syft, Trivy)'
+
+inputs:
+  tools:
+    description: 'Comma-separated list of tools to install (hadolint,grype,syft,trivy,dive)'
+    required: false
+    default: 'hadolint,grype,syft,trivy'
+  hadolint-version:
+    description: 'Hadolint version'
+    required: false
+    default: '2.12.0'
+  grype-version:
+    description: 'Grype version'
+    required: false
+    default: '0.84.0'
+  syft-version:
+    description: 'Syft version'
+    required: false
+    default: '1.18.1'
+  trivy-version:
+    description: 'Trivy version'
+    required: false
+    default: '0.58.0'
+  dive-version:
+    description: 'Dive version'
+    required: false
+    default: '0.12.0'
+
+outputs:
+  hadolint-path:
+    description: 'Path to Hadolint binary'
+    value: ${{ steps.paths.outputs.hadolint }}
+  grype-path:
+    description: 'Path to Grype binary'
+    value: ${{ steps.paths.outputs.grype }}
+  syft-path:
+    description: 'Path to Syft binary'
+    value: ${{ steps.paths.outputs.syft }}
+  trivy-path:
+    description: 'Path to Trivy binary'
+    value: ${{ steps.paths.outputs.trivy }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Create tools directory
+      shell: bash
+      run: mkdir -p $HOME/.local/bin
+
+    - name: Cache security tools
+      uses: actions/cache@v4
+      id: cache
+      with:
+        path: $HOME/.local/bin
+        key: security-tools-${{ runner.os }}-h${{ inputs.hadolint-version }}-g${{ inputs.grype-version }}-s${{ inputs.syft-version }}-t${{ inputs.trivy-version }}-d${{ inputs.dive-version }}
+
+    - name: Install Hadolint
+      if: contains(inputs.tools, 'hadolint') && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "📥 Installing Hadolint v${{ inputs.hadolint-version }}..."
+        curl -sL -o $HOME/.local/bin/hadolint \
+          "https://github.com/hadolint/hadolint/releases/download/v${{ inputs.hadolint-version }}/hadolint-Linux-x86_64"
+        chmod +x $HOME/.local/bin/hadolint
+        echo "✅ Hadolint installed"
+
+    - name: Install Grype
+      if: contains(inputs.tools, 'grype') && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "📥 Installing Grype v${{ inputs.grype-version }}..."
+        curl -sSfL "https://github.com/anchore/grype/releases/download/v${{ inputs.grype-version }}/grype_${{ inputs.grype-version }}_linux_amd64.tar.gz" \
+          | tar xz -C $HOME/.local/bin grype
+        echo "✅ Grype installed"
+
+    - name: Install Syft
+      if: contains(inputs.tools, 'syft') && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "📥 Installing Syft v${{ inputs.syft-version }}..."
+        curl -sSfL "https://github.com/anchore/syft/releases/download/v${{ inputs.syft-version }}/syft_${{ inputs.syft-version }}_linux_amd64.tar.gz" \
+          | tar xz -C $HOME/.local/bin syft
+        echo "✅ Syft installed"
+
+    - name: Install Trivy
+      if: contains(inputs.tools, 'trivy') && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "📥 Installing Trivy v${{ inputs.trivy-version }}..."
+        curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${{ inputs.trivy-version }}/trivy_${{ inputs.trivy-version }}_Linux-64bit.tar.gz" \
+          | tar xz -C $HOME/.local/bin trivy
+        echo "✅ Trivy installed"
+
+    - name: Install Dive
+      if: contains(inputs.tools, 'dive') && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "📥 Installing Dive v${{ inputs.dive-version }}..."
+        curl -sSfL "https://github.com/wagoodman/dive/releases/download/v${{ inputs.dive-version }}/dive_${{ inputs.dive-version }}_linux_amd64.tar.gz" \
+          | tar xz -C $HOME/.local/bin dive
+        echo "✅ Dive installed"
+
+    - name: Add to PATH
+      shell: bash
+      run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Set output paths
+      id: paths
+      shell: bash
+      run: |
+        echo "hadolint=$HOME/.local/bin/hadolint" >> $GITHUB_OUTPUT
+        echo "grype=$HOME/.local/bin/grype" >> $GITHUB_OUTPUT
+        echo "syft=$HOME/.local/bin/syft" >> $GITHUB_OUTPUT
+        echo "trivy=$HOME/.local/bin/trivy" >> $GITHUB_OUTPUT
+        echo "dive=$HOME/.local/bin/dive" >> $GITHUB_OUTPUT
+
+    - name: Verify installations
+      shell: bash
+      run: |
+        echo "🔍 Verifying installed tools..."
+        
+        if [[ "${{ inputs.tools }}" == *"hadolint"* ]]; then
+          hadolint --version || echo "⚠️ Hadolint not found"
+        fi
+        
+        if [[ "${{ inputs.tools }}" == *"grype"* ]]; then
+          grype version || echo "⚠️ Grype not found"
+        fi
+        
+        if [[ "${{ inputs.tools }}" == *"syft"* ]]; then
+          syft version || echo "⚠️ Syft not found"
+        fi
+        
+        if [[ "${{ inputs.tools }}" == *"trivy"* ]]; then
+          trivy version || echo "⚠️ Trivy not found"
+        fi
+        
+        if [[ "${{ inputs.tools }}" == *"dive"* ]]; then
+          dive version || echo "⚠️ Dive not found"
+        fi
+        
+        echo "✅ Tool verification complete"
