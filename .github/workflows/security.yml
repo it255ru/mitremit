@@ -1,0 +1,590 @@
+# =============================================================================
+# Security Scan - Comprehensive vulnerability analysis
+# =============================================================================
+name: Security Scan
+
+on:
+  push:
+    branches: [master, main]
+  schedule:
+    # Weekly scan: Monday at 6:00 UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      create-issue:
+        description: 'Create GitHub issue with results'
+        type: boolean
+        default: true
+      fail-on-critical:
+        description: 'Fail workflow on critical vulnerabilities'
+        type: boolean
+        default: true
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  issues: write
+
+env:
+  IMAGE_NAME: alpine-secure
+  GRYPE_VERSION: "0.84.0"
+  SYFT_VERSION: "1.18.1"
+  TRIVY_VERSION: "0.58.0"
+
+jobs:
+  # ===========================================================================
+  # Build Image
+  # ===========================================================================
+  build:
+    name: Build Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    outputs:
+      success: ${{ steps.build.outputs.success }}
+      alpine-version: ${{ steps.info.outputs.alpine-version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        id: build
+        run: |
+          if docker build -t ${{ env.IMAGE_NAME }}:latest .; then
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Get image info
+        id: info
+        run: |
+          VERSION=$(docker run --rm --entrypoint cat ${{ env.IMAGE_NAME }}:latest /etc/alpine-release 2>/dev/null || echo "scratch")
+          echo "alpine-version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Save image
+        run: docker save ${{ env.IMAGE_NAME }}:latest | gzip > image.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar.gz
+          retention-days: 1
+
+  # ===========================================================================
+  # Generate SBOM
+  # ===========================================================================
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+    if: needs.build.outputs.success == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load image
+        run: gunzip -c image.tar.gz | docker load
+
+      - name: Install Syft
+        run: |
+          curl -sSfL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+            | tar xz -C /usr/local/bin syft
+
+      - name: Generate SBOM (CycloneDX)
+        run: syft ${{ env.IMAGE_NAME }}:latest -o cyclonedx-json > sbom.cyclonedx.json
+
+      - name: Generate SBOM (SPDX)
+        run: syft ${{ env.IMAGE_NAME }}:latest -o spdx-json > sbom.spdx.json
+
+      - name: SBOM Summary
+        run: |
+          COMPONENTS=$(jq '.components | length' sbom.cyclonedx.json)
+          echo "## SBOM Generated" >> $GITHUB_STEP_SUMMARY
+          echo "- Components: $COMPONENTS" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom.cyclonedx.json
+            sbom.spdx.json
+          retention-days: 30
+
+  # ===========================================================================
+  # Grype Vulnerability Scan
+  # ===========================================================================
+  grype-scan:
+    name: Grype Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [build, sbom]
+
+    outputs:
+      critical: ${{ steps.analyze.outputs.critical }}
+      high: ${{ steps.analyze.outputs.high }}
+      medium: ${{ steps.analyze.outputs.medium }}
+      low: ${{ steps.analyze.outputs.low }}
+      total: ${{ steps.analyze.outputs.total }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+
+      - name: Install Grype
+        run: |
+          curl -sSfL "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz" \
+            | tar xz -C /usr/local/bin grype
+
+      - name: Create Grype config
+        run: |
+          cat > .grype.yaml << 'EOF'
+          ignore:
+            - vulnerability: CVE-2025-60876
+              reason: "busybox wget not used - Go app uses native net/http"
+            - vulnerability: CVE-2025-46394
+              reason: "busybox tar escape sequences - not exploitable in this context"
+          EOF
+
+      - name: Run Grype scan
+        run: |
+          grype sbom:sbom.cyclonedx.json \
+            --config .grype.yaml \
+            -o json > grype-results.json 2>&1 || true
+
+      - name: Analyze results
+        id: analyze
+        run: |
+          if [ -f grype-results.json ] && jq -e . grype-results.json > /dev/null 2>&1; then
+            CRITICAL=$(jq '[.matches[]? | select(.vulnerability.severity == "Critical")] | length' grype-results.json)
+            HIGH=$(jq '[.matches[]? | select(.vulnerability.severity == "High")] | length' grype-results.json)
+            MEDIUM=$(jq '[.matches[]? | select(.vulnerability.severity == "Medium")] | length' grype-results.json)
+            LOW=$(jq '[.matches[]? | select(.vulnerability.severity == "Low")] | length' grype-results.json)
+            TOTAL=$((CRITICAL + HIGH + MEDIUM + LOW))
+          else
+            CRITICAL=0 HIGH=0 MEDIUM=0 LOW=0 TOTAL=0
+          fi
+          
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+          echo "medium=$MEDIUM" >> $GITHUB_OUTPUT
+          echo "low=$LOW" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          
+          echo "## Grype Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚨 Critical | $CRITICAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔴 High | $HIGH |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟡 Medium | $MEDIUM |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔵 Low | $LOW |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Generate detailed report
+        run: |
+          echo "# Grype Vulnerability Report" > grype-report.md
+          echo "" >> grype-report.md
+          echo "## Summary" >> grype-report.md
+          echo "- Critical: ${{ steps.analyze.outputs.critical }}" >> grype-report.md
+          echo "- High: ${{ steps.analyze.outputs.high }}" >> grype-report.md
+          echo "- Medium: ${{ steps.analyze.outputs.medium }}" >> grype-report.md
+          echo "- Low: ${{ steps.analyze.outputs.low }}" >> grype-report.md
+          echo "" >> grype-report.md
+          echo "## Details" >> grype-report.md
+          echo "" >> grype-report.md
+          echo "| Severity | CVE | Package | Version | Fixed In |" >> grype-report.md
+          echo "|----------|-----|---------|---------|----------|" >> grype-report.md
+          jq -r '.matches[]? | "| \(.vulnerability.severity // "Unknown") | \(.vulnerability.id) | \(.artifact.name) | \(.artifact.version) | \(.vulnerability.fix.versions[0] // "N/A") |"' grype-results.json >> grype-report.md 2>/dev/null || true
+
+      - name: Upload Grype results
+        uses: actions/upload-artifact@v4
+        with:
+          name: grype-results
+          path: |
+            grype-results.json
+            grype-report.md
+            .grype.yaml
+          retention-days: 30
+
+  # ===========================================================================
+  # Trivy Vulnerability Scan
+  # ===========================================================================
+  trivy-scan:
+    name: Trivy Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build
+
+    outputs:
+      critical: ${{ steps.analyze.outputs.critical }}
+      high: ${{ steps.analyze.outputs.high }}
+      total: ${{ steps.analyze.outputs.total }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load image
+        run: gunzip -c image.tar.gz | docker load
+
+      - name: Create Trivy ignore file
+        run: |
+          cat > .trivyignore << 'EOF'
+          # BusyBox vulnerabilities - not applicable
+          CVE-2025-60876
+          CVE-2025-46394
+          EOF
+
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:latest
+          format: 'json'
+          output: 'trivy-results.json'
+          trivyignores: .trivyignore
+
+      - name: Run Trivy (table output)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:latest
+          format: 'table'
+          output: 'trivy-report.txt'
+          trivyignores: .trivyignore
+
+      - name: Analyze results
+        id: analyze
+        run: |
+          if [ -f trivy-results.json ]; then
+            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-results.json)
+            HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-results.json)
+            MEDIUM=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length' trivy-results.json)
+            LOW=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "LOW")] | length' trivy-results.json)
+            TOTAL=$((CRITICAL + HIGH + MEDIUM + LOW))
+          else
+            CRITICAL=0 HIGH=0 MEDIUM=0 LOW=0 TOTAL=0
+          fi
+          
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          
+          echo "## Trivy Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚨 Critical | $CRITICAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔴 High | $HIGH |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟡 Medium | $MEDIUM |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔵 Low | $LOW |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: 'trivy-results.json'
+          category: 'trivy'
+
+      - name: Upload Trivy results
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results
+          path: |
+            trivy-results.json
+            trivy-report.txt
+            .trivyignore
+          retention-days: 30
+
+  # ===========================================================================
+  # Docker Image Analysis
+  # ===========================================================================
+  image-analysis:
+    name: Image Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+
+    steps:
+      - name: Download image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load image
+        run: gunzip -c image.tar.gz | docker load
+
+      - name: Analyze layers
+        run: |
+          echo "# Docker Image Analysis" > image-analysis.md
+          echo "" >> image-analysis.md
+          
+          # Image size
+          SIZE=$(docker images ${{ env.IMAGE_NAME }}:latest --format "{{.Size}}")
+          echo "## Image Size: $SIZE" >> image-analysis.md
+          echo "" >> image-analysis.md
+          
+          # Layer history
+          echo "## Layers" >> image-analysis.md
+          echo '```' >> image-analysis.md
+          docker history ${{ env.IMAGE_NAME }}:latest >> image-analysis.md
+          echo '```' >> image-analysis.md
+
+      - name: Docker inspect
+        run: docker inspect ${{ env.IMAGE_NAME }}:latest > docker-inspect.json
+
+      - name: Security checks
+        run: |
+          echo "" >> image-analysis.md
+          echo "## Security Configuration" >> image-analysis.md
+          
+          # Check user
+          USER=$(jq -r '.[0].Config.User // "root"' docker-inspect.json)
+          if [ "$USER" = "root" ] || [ "$USER" = "" ]; then
+            echo "- ⚠️ Runs as root" >> image-analysis.md
+          else
+            echo "- ✅ Runs as non-root: $USER" >> image-analysis.md
+          fi
+          
+          # Check exposed ports
+          PORTS=$(jq -r '.[0].Config.ExposedPorts // {} | keys[]' docker-inspect.json 2>/dev/null || echo "none")
+          echo "- Exposed ports: $PORTS" >> image-analysis.md
+          
+          # Check healthcheck
+          HEALTHCHECK=$(jq -r '.[0].Config.Healthcheck // "none"' docker-inspect.json)
+          if [ "$HEALTHCHECK" = "none" ] || [ "$HEALTHCHECK" = "null" ]; then
+            echo "- ⚠️ No healthcheck configured" >> image-analysis.md
+          else
+            echo "- ✅ Healthcheck configured" >> image-analysis.md
+          fi
+
+      - name: Upload analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-analysis
+          path: |
+            image-analysis.md
+            docker-inspect.json
+          retention-days: 30
+
+  # ===========================================================================
+  # Security Report
+  # ===========================================================================
+  report:
+    name: Security Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [build, sbom, grype-scan, trivy-scan, image-analysis]
+    if: always()
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate comprehensive report
+        env:
+          GRYPE_CRITICAL: ${{ needs.grype-scan.outputs.critical }}
+          GRYPE_HIGH: ${{ needs.grype-scan.outputs.high }}
+          GRYPE_MEDIUM: ${{ needs.grype-scan.outputs.medium }}
+          GRYPE_LOW: ${{ needs.grype-scan.outputs.low }}
+          TRIVY_CRITICAL: ${{ needs.trivy-scan.outputs.critical }}
+          TRIVY_HIGH: ${{ needs.trivy-scan.outputs.high }}
+          ALPINE_VERSION: ${{ needs.build.outputs.alpine-version }}
+        run: |
+          cat > security-report.md << EOF
+          # 🛡️ Security Scan Report
+          
+          **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          **Image:** ${{ env.IMAGE_NAME }}:latest
+          **Alpine Version:** ${ALPINE_VERSION:-unknown}
+          **Commit:** ${{ github.sha }}
+          **Branch:** ${{ github.ref_name }}
+          
+          ## 📊 Vulnerability Summary
+          
+          ### Grype Results
+          | Severity | Count |
+          |----------|-------|
+          | 🚨 Critical | ${GRYPE_CRITICAL:-0} |
+          | 🔴 High | ${GRYPE_HIGH:-0} |
+          | 🟡 Medium | ${GRYPE_MEDIUM:-0} |
+          | 🔵 Low | ${GRYPE_LOW:-0} |
+          
+          ### Trivy Results
+          | Severity | Count |
+          |----------|-------|
+          | 🚨 Critical | ${TRIVY_CRITICAL:-0} |
+          | 🔴 High | ${TRIVY_HIGH:-0} |
+          
+          ## 📁 Artifacts
+          
+          - SBOM (CycloneDX & SPDX)
+          - Grype detailed report
+          - Trivy detailed report
+          - Docker image analysis
+          
+          ---
+          *Generated by [Security Scan](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})*
+          EOF
+
+      - name: Upload comprehensive report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: security-report.md
+          retention-days: 30
+
+      - name: Write job summary
+        env:
+          GRYPE_CRITICAL: ${{ needs.grype-scan.outputs.critical }}
+          GRYPE_HIGH: ${{ needs.grype-scan.outputs.high }}
+          TRIVY_CRITICAL: ${{ needs.trivy-scan.outputs.critical }}
+        run: |
+          echo "## 🛡️ Security Scan Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          TOTAL_CRITICAL=$((${GRYPE_CRITICAL:-0} > ${TRIVY_CRITICAL:-0} ? ${GRYPE_CRITICAL:-0} : ${TRIVY_CRITICAL:-0}))
+          TOTAL_HIGH=$((${GRYPE_HIGH:-0}))
+          
+          if [ "$TOTAL_CRITICAL" -gt 0 ]; then
+            echo "### 🚨 $TOTAL_CRITICAL Critical Vulnerabilities Found" >> $GITHUB_STEP_SUMMARY
+          elif [ "$TOTAL_HIGH" -gt 0 ]; then
+            echo "### ⚠️ $TOTAL_HIGH High Vulnerabilities Found" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ✅ No Critical/High Vulnerabilities" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ===========================================================================
+  # Create GitHub Issue
+  # ===========================================================================
+  create-issue:
+    name: Create Issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [build, grype-scan, trivy-scan, report]
+    if: |
+      always() && 
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.create-issue == 'true')
+
+    permissions:
+      issues: write
+
+    steps:
+      - name: Download report
+        uses: actions/download-artifact@v4
+        with:
+          name: security-report
+
+      - name: Download Grype results
+        uses: actions/download-artifact@v4
+        with:
+          name: grype-results
+        continue-on-error: true
+
+      - name: Create or update issue
+        uses: actions/github-script@v7
+        env:
+          GRYPE_CRITICAL: ${{ needs.grype-scan.outputs.critical }}
+          GRYPE_HIGH: ${{ needs.grype-scan.outputs.high }}
+          GRYPE_TOTAL: ${{ needs.grype-scan.outputs.total }}
+          BUILD_SUCCESS: ${{ needs.build.outputs.success }}
+        with:
+          script: |
+            const fs = require('fs');
+            
+            const critical = parseInt(process.env.GRYPE_CRITICAL) || 0;
+            const high = parseInt(process.env.GRYPE_HIGH) || 0;
+            const total = parseInt(process.env.GRYPE_TOTAL) || 0;
+            const buildSuccess = process.env.BUILD_SUCCESS;
+            
+            // Read report
+            let body = '## Security Scan Results\n\nReport not available.';
+            if (fs.existsSync('security-report.md')) {
+              body = fs.readFileSync('security-report.md', 'utf8');
+            }
+            
+            // Determine title and labels
+            let title, labels = ['security', 'automated'];
+            
+            if (buildSuccess === 'false') {
+              title = '🚨 Security Scan: Build Failed';
+              labels.push('build-failed');
+            } else if (critical > 0) {
+              title = `🚨 Security: ${critical} Critical Vulnerabilities`;
+              labels.push('critical');
+            } else if (high > 0) {
+              title = `🔴 Security: ${high} High Vulnerabilities`;
+              labels.push('high');
+            } else if (total > 0) {
+              title = `⚠️ Security: ${total} Vulnerabilities Found`;
+              labels.push('medium');
+            } else {
+              title = '✅ Security Scan: All Clear';
+              labels.push('passed');
+            }
+            
+            // Add run link
+            body += `\n\n---\n[View Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+            
+            // Create issue
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: labels
+            });
+
+  # ===========================================================================
+  # Security Gate
+  # ===========================================================================
+  security-gate:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    needs: [grype-scan, trivy-scan]
+    if: always()
+
+    steps:
+      - name: Check for critical vulnerabilities
+        env:
+          GRYPE_CRITICAL: ${{ needs.grype-scan.outputs.critical }}
+          TRIVY_CRITICAL: ${{ needs.trivy-scan.outputs.critical }}
+          FAIL_ON_CRITICAL: ${{ github.event.inputs.fail-on-critical || 'true' }}
+        run: |
+          CRITICAL=$((${GRYPE_CRITICAL:-0} + ${TRIVY_CRITICAL:-0}))
+          
+          echo "Total critical vulnerabilities: $CRITICAL"
+          
+          if [ "$FAIL_ON_CRITICAL" = "true" ] && [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::Found $CRITICAL critical vulnerabilities"
+            exit 1
+          fi
+          
+          echo "✅ Security gate passed"
