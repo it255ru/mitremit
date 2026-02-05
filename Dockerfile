@@ -1,4 +1,4 @@
-FROM golang:1.25.6-alpine AS builder
+FROM golang:1.26rc3-alpine AS builder
 WORKDIR /build
 COPY mitre-mitigates.go .
 RUN CGO_ENABLED=0 GOOS=linux go build \
