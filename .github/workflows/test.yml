@@ -5,7 +5,7 @@ name: Test
 
 on:
   push:
-    branches: [master, no-cache-ttl]
+    branches: [master, cache_ttl]
     paths:
       - '*.go'
       - 'go.mod'
