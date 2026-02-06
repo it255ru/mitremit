@@ -280,7 +280,7 @@ func fetchBundle() ([]byte, error) {
 		}
 		// Создаем временный файл для атомарной записи
 		tmpPath := bundlePath + ".tmp"
-		if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 			if *flagDbg {
 				fmt.Fprintf(os.Stdout, ">>> WARNING: failed to write cache: %v\n", err)
 			}
