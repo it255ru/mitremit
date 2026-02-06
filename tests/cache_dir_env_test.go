@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -29,7 +28,7 @@ func getBinary(t *testing.T) string {
 		bin += ".exe"
 	}
 	root := repoRoot(t)
-	cmd := exec.Command("go", "build", "-o", bin, root)
+	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Dir = root
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -39,35 +38,19 @@ func getBinary(t *testing.T) string {
 	return bin
 }
 
-// repoRoot возвращает абсолютный путь к корню модуля (директория с go.mod).
-// В CI cwd может быть .../mitremit/tests, а Caller — относительный путь "tests/..."; не делать Join(wd, "tests") → .../tests/tests.
+// repoRoot возвращает корень модуля через go list -m (надёжно в CI и локально).
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	_, file, _, _ := runtime.Caller(1)
-	dir := filepath.Dir(file)
-	if !filepath.IsAbs(dir) {
-		wd, err := os.Getwd()
-		if err != nil {
-			t.Fatalf("getwd: %v", err)
-		}
-		// Если уже в каталоге tests/, не склеивать wd + "tests" (получится .../tests/tests)
-		if filepath.Base(wd) == "tests" && dir == "tests" {
-			dir = wd
-		} else {
-			dir = filepath.Join(wd, dir)
-		}
+	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list -m: %v", err)
 	}
-	dir = filepath.Clean(dir)
-	if filepath.Base(dir) == "tests" {
-		return filepath.Dir(dir)
+	root := strings.TrimSpace(string(out))
+	if root == "" {
+		t.Fatal("go list -m returned empty dir")
 	}
-	for d := dir; d != filepath.Dir(d); d = filepath.Dir(d) {
-		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
-			return d
-		}
-	}
-	t.Fatal("repo root (go.mod) not found")
-	return ""
+	return root
 }
 
 // runMitremit запускает бинарник с заданным env и аргументами, возвращает stdout и stderr.
