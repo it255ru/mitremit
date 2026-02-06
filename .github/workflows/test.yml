@@ -41,7 +41,12 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+      - name: Build binary
+        run: go build -o mitremit .
+
       - name: Run tests
+        env:
+          MITREMIT_BINARY: ${{ github.workspace }}/mitremit
         run: go test -v -race -count=1 ./...
 
       - name: Test summary

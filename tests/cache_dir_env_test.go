@@ -17,17 +17,30 @@ const (
 	cacheDirLine     = ">>> cache directory:"
 )
 
-// getBinary строит бинарник mitremit в временную директорию и возвращает путь к нему.
+const envMitremitBinary = "MITREMIT_BINARY"
+
+// getBinary возвращает путь к бинарнику mitremit: из env MITREMIT_BINARY, из корня модуля (если уже собран), иначе собирает.
 func getBinary(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "mitremit")
-	if goExe := os.Getenv("GOEXE"); goExe != "" {
-		bin += goExe
-	} else if os.PathListSeparator == ';' {
-		bin += ".exe"
-	}
 	root := repoRoot(t)
+	binName := "mitremit"
+	if goExe := os.Getenv("GOEXE"); goExe != "" {
+		binName += goExe
+	} else if os.PathListSeparator == ';' {
+		binName += ".exe"
+	}
+	if p := os.Getenv(envMitremitBinary); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	if p := filepath.Join(root, binName); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, binName)
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Dir = root
 	cmd.Stdout = os.Stdout
