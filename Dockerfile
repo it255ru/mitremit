@@ -1,7 +1,6 @@
 FROM golang:1.26rc3-alpine AS builder
 WORKDIR /build
-COPY go.mod ./
-COPY mitre-mitigates.go ./
+COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-w -s" \
     -o mitre-sync \
