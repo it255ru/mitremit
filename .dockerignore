@@ -10,10 +10,6 @@ docker-compose*.yml
 *.swo
 .DS_Store
 
-# Игнорируем go.mod и go.sum если их нет
-go.mod
-go.sum
-
 # Артефакты сборки
 mitre-sync
 mitre-sync.exe

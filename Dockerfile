@@ -1,10 +1,10 @@
 FROM golang:1.26rc3-alpine AS builder
 WORKDIR /build
-COPY mitre-mitigates.go .
+COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-w -s" \
     -o mitre-sync \
-    mitre-mitigates.go
+    .
 
 FROM alpine:3.23
 RUN apk add --no-cache ca-certificates tzdata \
