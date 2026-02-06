@@ -5,7 +5,7 @@ name: Test
 
 on:
   push:
-    branches: [master, dedup_sort_test]
+    branches: [master, did_you_mean_test]
     paths:
       - '*.go'
       - 'go.mod'
