@@ -40,7 +40,7 @@ func getBinary(t *testing.T) string {
 }
 
 // repoRoot возвращает абсолютный путь к корню модуля (директория с go.mod).
-// Не зависит от текущей рабочей директории; в CI Caller может вернуть относительный путь.
+// В CI cwd может быть .../mitremit/tests, а Caller — относительный путь "tests/..."; не делать Join(wd, "tests") → .../tests/tests.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(1)
@@ -50,14 +50,17 @@ func repoRoot(t *testing.T) string {
 		if err != nil {
 			t.Fatalf("getwd: %v", err)
 		}
-		dir = filepath.Join(wd, dir)
+		// Если уже в каталоге tests/, не склеивать wd + "tests" (получится .../tests/tests)
+		if filepath.Base(wd) == "tests" && dir == "tests" {
+			dir = wd
+		} else {
+			dir = filepath.Join(wd, dir)
+		}
 	}
 	dir = filepath.Clean(dir)
-	// Тесты лежат в tests/, корень модуля — родитель
 	if filepath.Base(dir) == "tests" {
 		return filepath.Dir(dir)
 	}
-	// Иначе поднимаемся вверх до каталога с go.mod
 	for d := dir; d != filepath.Dir(d); d = filepath.Dir(d) {
 		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
 			return d
