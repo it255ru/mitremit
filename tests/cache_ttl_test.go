@@ -4,6 +4,7 @@ package tests
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -54,5 +55,28 @@ func TestCacheTTL_ExpiredCacheIgnored(t *testing.T) {
 	}
 	if strings.Contains(stdout, "cached bundle found") {
 		t.Errorf("expired cache must not be used; stdout:\n%s", stdout)
+	}
+}
+
+// Ожидаемые права на файл кэша: только владелец (0o600), не rw-r--r--.
+const expectedCacheFileMode = 0o600
+
+func TestCacheFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file mode check meaningful only on Unix")
+	}
+	bin := getBinary(t)
+	cacheDir := t.TempDir()
+	// Пустой кэш — программа скачает бандл и запишет файл
+	runMitremit(t, bin, map[string]string{envMITRECacheDir: cacheDir},
+		"-mitigation", "M1037")
+	bundlePath := filepath.Join(cacheDir, cacheFilename)
+	info, err := os.Stat(bundlePath)
+	if err != nil {
+		t.Fatalf("cache file not found or unreadable: %v", err)
+	}
+	perm := info.Mode().Perm()
+	if perm != expectedCacheFileMode {
+		t.Errorf("cache file permissions: got %o, want %o (owner-only for multi-user safety)", perm, expectedCacheFileMode)
 	}
 }
