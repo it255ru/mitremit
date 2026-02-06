@@ -5,14 +5,14 @@ name: Test
 
 on:
   push:
-    branches: [master, main, develop]
+    branches: [master, fix-path-traversal]
     paths:
       - '*.go'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/test.yml'
   pull_request:
-    branches: [master, main]
+    branches: [master]
     paths:
       - '*.go'
       - 'go.mod'
