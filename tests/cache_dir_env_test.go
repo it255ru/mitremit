@@ -28,8 +28,9 @@ func getBinary(t *testing.T) string {
 	} else if os.PathListSeparator == ';' {
 		bin += ".exe"
 	}
-	cmd := exec.Command("go", "build", "-o", bin, ".")
-	cmd.Dir = repoRoot(t)
+	root := repoRoot(t)
+	cmd := exec.Command("go", "build", "-o", bin, root)
+	cmd.Dir = root
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -38,11 +39,20 @@ func getBinary(t *testing.T) string {
 	return bin
 }
 
-// repoRoot возвращает корень модуля (директорию с go.mod), не завися от текущей рабочей директории.
+// repoRoot возвращает абсолютный путь к корню модуля (директория с go.mod).
+// Не зависит от текущей рабочей директории; в CI Caller может вернуть относительный путь.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(1)
 	dir := filepath.Dir(file)
+	if !filepath.IsAbs(dir) {
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		dir = filepath.Join(wd, dir)
+	}
+	dir = filepath.Clean(dir)
 	// Тесты лежат в tests/, корень модуля — родитель
 	if filepath.Base(dir) == "tests" {
 		return filepath.Dir(dir)
