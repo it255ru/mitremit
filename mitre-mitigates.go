@@ -14,6 +14,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 )
 
 /*
@@ -539,8 +540,15 @@ func printTable(mitSTIX string, mit courseOfAction, data []techniqueInfo) {
 Nebula Graph nGQL generation
 -------------------------------------------------------------
 */
+// quoteID экранирует идентификатор для nGQL: только буквы, цифры, '-', '_', '.'; остальное заменяется на '_'.
 func quoteID(s string) string {
-	return "`" + strings.ReplaceAll(s, "`", "``") + "`"
+	sanitized := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '.' {
+			return r
+		}
+		return '_'
+	}, s)
+	return "`" + strings.ReplaceAll(sanitized, "`", "``") + "`"
 }
 func quoteLiteral(s string) string { return strconv.Quote(s) }
 
