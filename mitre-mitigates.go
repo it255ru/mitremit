@@ -64,12 +64,19 @@ type baseObject struct {
 	ID   string `json:"id"`
 }
 
+// Kill chain phase (ATT&CK tactic)
+type killChainPhase struct {
+	KillChainName string `json:"kill_chain_name"`
+	PhaseName     string `json:"phase_name"`
+}
+
 // Technique / sub‑technique
 type attackPattern struct {
-	Type         string              `json:"type"`
-	ID           string              `json:"id"`
-	Name         string              `json:"name"`
-	ExternalRefs []externalReference `json:"external_references,omitempty"`
+	Type            string              `json:"type"`
+	ID              string              `json:"id"`
+	Name            string              `json:"name"`
+	ExternalRefs    []externalReference `json:"external_references,omitempty"`
+	KillChainPhases []killChainPhase    `json:"kill_chain_phases,omitempty"`
 }
 
 // Mitigation
@@ -108,6 +115,17 @@ func externalID(refs []externalReference) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// tacticsFromKillChain возвращает phase_name из фаз с kill_chain_name == "mitre-attack".
+func tacticsFromKillChain(phases []killChainPhase) []string {
+	var out []string
+	for _, p := range phases {
+		if strings.EqualFold(p.KillChainName, "mitre-attack") && p.PhaseName != "" {
+			out = append(out, p.PhaseName)
+		}
+	}
+	return out
 }
 
 // levenshtein возвращает расстояние Левенштейна между a и b (количество вставок/замен/удалений).
@@ -403,8 +421,9 @@ Core extraction logic
 -------------------------------------------------------------
 */
 type techniqueInfo struct {
-	ExternalID string `json:"external_id"`
-	Name       string `json:"name"`
+	ExternalID string   `json:"external_id"`
+	Name       string   `json:"name"`
+	Tactics    []string `json:"tactics,omitempty"`
 }
 
 func main() {
@@ -530,6 +549,7 @@ func main() {
 			results = append(results, techniqueInfo{
 				ExternalID: ext,
 				Name:       tp.Name,
+				Tactics:    tacticsFromKillChain(tp.KillChainPhases),
 			})
 		}
 	}
@@ -552,10 +572,11 @@ func main() {
 	}
 	if *flagCSV {
 		w := csv.NewWriter(os.Stdout)
-		_ = w.Write([]string{"Mitigation ID", "Mitigation Name", "Technique ID", "Technique Name"})
+		_ = w.Write([]string{"Mitigation ID", "Mitigation Name", "Technique ID", "Technique Name", "Tactics"})
 		mitExt, _ := externalID(mitMap[chosenMitSTIXID].ExternalRefs)
 		for _, t := range results {
-			_ = w.Write([]string{mitExt, mitMap[chosenMitSTIXID].Name, t.ExternalID, t.Name})
+			tacticsStr := strings.Join(t.Tactics, "; ")
+			_ = w.Write([]string{mitExt, mitMap[chosenMitSTIXID].Name, t.ExternalID, t.Name, tacticsStr})
 		}
 		w.Flush()
 		return
@@ -611,9 +632,10 @@ func printTable(mitSTIX string, mit courseOfAction, data []techniqueInfo) {
 	mitExt, _ := externalID(mit.ExternalRefs)
 	fmt.Fprintf(w, "MITIGATION\t%s (%s)\n", mit.Name, mitExt)
 	fmt.Fprintln(w, "---------------------------------------------------------------")
-	fmt.Fprintln(w, "TECHNIQUE ID\tTECHNIQUE NAME")
+	fmt.Fprintln(w, "TECHNIQUE ID\tTECHNIQUE NAME\tTACTICS")
 	for _, t := range data {
-		fmt.Fprintf(w, "%s\t%s\n", t.ExternalID, t.Name)
+		tacticsStr := strings.Join(t.Tactics, ", ")
+		fmt.Fprintf(w, "%s\t%s\t%s\n", t.ExternalID, t.Name, tacticsStr)
 	}
 	_ = w.Flush()
 }
@@ -643,10 +665,11 @@ func emitNGQL(mitSTIX string, techs []techniqueInfo, mit courseOfAction) {
 	fmt.Fprintf(&b, "INSERT VERTEX mitigation(id, name) VALUES %s:(%s, %s);\n",
 		quoteID(mitExt), quoteLiteral(mitExt), quoteLiteral(mit.Name))
 
-	// technique vertices
+	// technique vertices (tactics as comma-separated string)
 	for _, t := range techs {
-		fmt.Fprintf(&b, "INSERT VERTEX technique(id, name) VALUES %s:(%s, %s);\n",
-			quoteID(t.ExternalID), quoteLiteral(t.ExternalID), quoteLiteral(t.Name))
+		tacticsStr := strings.Join(t.Tactics, ",")
+		fmt.Fprintf(&b, "INSERT VERTEX technique(id, name, tactics) VALUES %s:(%s, %s, %s);\n",
+			quoteID(t.ExternalID), quoteLiteral(t.ExternalID), quoteLiteral(t.Name), quoteLiteral(tacticsStr))
 	}
 
 	// edges: mitigation -> technique

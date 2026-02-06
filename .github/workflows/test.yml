@@ -5,7 +5,7 @@ name: Test
 
 on:
   push:
-    branches: [master, did_you_mean_test]
+    branches: [master, tactics_test]
     paths:
       - '*.go'
       - 'go.mod'
