@@ -117,6 +117,7 @@ func externalID(refs []externalReference) (string, bool) {
 */
 const (
 	bundleURL = "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
+	cacheTTL  = 24 * time.Hour
 )
 
 // getCacheDir определяет директорию для кэша с приоритетом:
@@ -181,6 +182,15 @@ func isRunningInContainer() bool {
 	return false
 }
 
+// isCacheValid возвращает true, если файл кэша существует и его возраст меньше cacheTTL.
+func isCacheValid(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) < cacheTTL
+}
+
 /*
 -------------------------------------------------------------
 Загрузка & кэширование ATT&CK bundle
@@ -214,28 +224,35 @@ func fetchBundle() ([]byte, error) {
 	bundlePath := filepath.Join(cacheDir, "enterprise-attack.json")
 
 	// -----------------------------------------------------------------
-	// 2️⃣ Используем кэшированный бандл если он существует
+	// 2️⃣ Используем кэшированный бандл если он существует и не устарел (cache TTL)
 	// -----------------------------------------------------------------
 	// Если cacheDir == "/dev/null", пропускаем проверку кэша
 	if cacheDir != "/dev/null" && !*flagForceRefresh {
-		if cached, err := os.ReadFile(bundlePath); err == nil {
-			if *flagDbg {
-				fmt.Fprintln(os.Stdout, ">>> cached bundle found – returning cached data")
-				fmt.Fprintf(os.Stdout, ">>> cache file: %s (%d bytes)\n",
-					bundlePath, len(cached))
+		if isCacheValid(bundlePath) {
+			if cached, err := os.ReadFile(bundlePath); err == nil {
+				if *flagDbg {
+					fmt.Fprintln(os.Stdout, ">>> cached bundle found – returning cached data")
+					fmt.Fprintf(os.Stdout, ">>> cache file: %s (%d bytes)\n",
+						bundlePath, len(cached))
+				}
+				return cached, nil // fast path – return cache
+			} else if !os.IsNotExist(err) {
+				// Если ошибка не "файл не существует", логируем но продолжаем
+				if *flagDbg {
+					fmt.Fprintf(os.Stdout, ">>> cache read error (will download): %v\n", err)
+				}
 			}
-			return cached, nil // fast path – return cache
-		} else if !os.IsNotExist(err) {
-			// Если ошибка не "файл не существует", логируем но продолжаем
-			if *flagDbg {
-				fmt.Fprintf(os.Stdout, ">>> cache read error (will download): %v\n", err)
-			}
+		} else if *flagDbg {
+			fmt.Fprintln(os.Stdout, ">>> cache expired or missing – will download")
 		}
-	} else if *flagDbg {
-		if *flagForceRefresh {
-			fmt.Fprintln(os.Stdout, ">>> force refresh - ignoring cache")
-		} else {
-			fmt.Fprintln(os.Stdout, ">>> cache disabled")
+	}
+	if cacheDir == "/dev/null" || *flagForceRefresh {
+		if *flagDbg {
+			if *flagForceRefresh {
+				fmt.Fprintln(os.Stdout, ">>> force refresh - ignoring cache")
+			} else {
+				fmt.Fprintln(os.Stdout, ">>> cache disabled")
+			}
 		}
 	}
 
