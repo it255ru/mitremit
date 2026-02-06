@@ -110,6 +110,64 @@ func externalID(refs []externalReference) (string, bool) {
 	return "", false
 }
 
+// levenshtein возвращает расстояние Левенштейна между a и b (количество вставок/замен/удалений).
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	na, nb := len(ra), len(rb)
+	if na == 0 {
+		return nb
+	}
+	if nb == 0 {
+		return na
+	}
+	// одна строка для текущей строки расстояний
+	cur := make([]int, nb+1)
+	for j := 0; j <= nb; j++ {
+		cur[j] = j
+	}
+	for i := 1; i <= na; i++ {
+		prev := cur[0]
+		cur[0] = i
+		for j := 1; j <= nb; j++ {
+			old := cur[j]
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev+cost, min(cur[j-1]+1, old+1))
+			prev = old
+		}
+	}
+	return cur[nb]
+}
+
+const didYouMeanMaxDist = 2
+
+// suggestMitigationName возвращает единственное имя митигации из mitMap с расстоянием Левенштейна до target ≤ maxDist.
+// Если таких 0 или больше одного — возвращает "".
+func suggestMitigationName(target string, mitMap map[string]courseOfAction, maxDist int) string {
+	targetLower := strings.ToLower(target)
+	var suggestion string
+	count := 0
+	for _, co := range mitMap {
+		if co.Name == "" {
+			continue
+		}
+		d := levenshtein(targetLower, strings.ToLower(co.Name))
+		if d <= maxDist && d > 0 {
+			if count == 1 && suggestion != co.Name {
+				return "" // больше одного варианта — не подсказываем
+			}
+			suggestion = co.Name
+			count++
+		}
+	}
+	if count != 1 {
+		return ""
+	}
+	return suggestion
+}
+
 /*
 -------------------------------------------------------------
 Константы и функции для работы с кэшем
@@ -439,7 +497,11 @@ func main() {
 			}
 		}
 		if chosenMitSTIXID == "" {
-			fmt.Fprintf(os.Stderr, "mitigation name %q not found (check spelling)\n", target)
+			msg := fmt.Sprintf("mitigation name %q not found (check spelling)", target)
+			if suggestion := suggestMitigationName(target, mitMap, didYouMeanMaxDist); suggestion != "" {
+				msg += fmt.Sprintf(". Did you mean: %q?", suggestion)
+			}
+			fmt.Fprintln(os.Stderr, msg)
 			os.Exit(1)
 		}
 	}
