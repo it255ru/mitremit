@@ -42,7 +42,11 @@ jobs:
           go-version-file: 'go.mod'
 
       - name: Build binary
-        run: go build -o mitremit .
+        working-directory: ${{ github.workspace }}
+        run: |
+          ls -la
+          test -f mitre-mitigates.go || (echo "Missing mitre-mitigates.go" && exit 1)
+          go build -o mitremit .
 
       - name: Run tests
         env:
