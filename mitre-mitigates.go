@@ -445,9 +445,10 @@ func main() {
 	}
 
 	/* ---------------------------------------------------------
-	   Collect all techniques that this mitigation mitigates
+	   Collect all techniques that this mitigation mitigates (без дубликатов, детерминированный порядок)
 	   --------------------------------------------------------- */
 	var results []techniqueInfo
+	seenTechniques := make(map[string]bool)
 	for _, r := range rels {
 		if r.RelationshipType != "mitigates" {
 			continue
@@ -460,13 +461,16 @@ func main() {
 			if ext == "" {
 				ext = strings.TrimPrefix(tp.ID, "attack-pattern--")
 			}
+			if seenTechniques[ext] {
+				continue
+			}
+			seenTechniques[ext] = true
 			results = append(results, techniqueInfo{
 				ExternalID: ext,
 				Name:       tp.Name,
 			})
 		}
 	}
-	// deterministic ordering – nice for CSV/JSON diffing
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].ExternalID < results[j].ExternalID
 	})
