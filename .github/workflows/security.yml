@@ -75,7 +75,7 @@ jobs:
         run: docker save ${{ env.IMAGE_NAME }}:latest | gzip > image.tar.gz
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: docker-image
           path: image.tar.gz
@@ -96,7 +96,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download image
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: docker-image
 
@@ -121,7 +121,7 @@ jobs:
           echo "- Components: $COMPONENTS" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: |
@@ -150,7 +150,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download SBOM
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: sbom
 
@@ -219,7 +219,7 @@ jobs:
           jq -r '.matches[]? | "| \(.vulnerability.severity // "Unknown") | \(.vulnerability.id) | \(.artifact.name) | \(.artifact.version) | \(.vulnerability.fix.versions[0] // "N/A") |"' grype-results.json >> grype-report.md 2>/dev/null || true
 
       - name: Upload Grype results
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: grype-results
           path: |
@@ -247,7 +247,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download image
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: docker-image
 
@@ -312,7 +312,7 @@ jobs:
           category: 'trivy'
 
       - name: Upload Trivy results
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-results
           path: |
@@ -332,7 +332,7 @@ jobs:
 
     steps:
       - name: Download image
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: docker-image
 
@@ -384,7 +384,7 @@ jobs:
           fi
 
       - name: Upload analysis
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: image-analysis
           path: |
@@ -404,7 +404,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -455,7 +455,7 @@ jobs:
           EOF
 
       - name: Upload comprehensive report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: security-report
           path: security-report.md
@@ -498,12 +498,12 @@ jobs:
 
     steps:
       - name: Download report
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: security-report
 
       - name: Download Grype results
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: grype-results
         continue-on-error: true
