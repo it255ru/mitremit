@@ -6,7 +6,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o mitre-sync \
     .
 
-FROM alpine:3.23
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -g 1000 appgroup \
     && adduser -u 1000 -G appgroup -D appuser
